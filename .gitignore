@@ -20,3 +20,6 @@ venv/
 
 # Backups
 *.backup_*
+
+# GCP credentials
+config/
