@@ -17,3 +17,6 @@ venv/
 
 # Logs
 *.log
+
+# Backups
+*.backup_*
