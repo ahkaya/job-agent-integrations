@@ -819,6 +819,32 @@ def ai_fill_form(
     keep_open_seconds=600,
 ):
     """Full pipeline: open form → extract → LLM → apply → wait for review."""
+    # Rename CV/CL to professional filenames before upload
+    import shutil, tempfile
+    _job_agent_root = Path.home() / "job-agent"
+    if _job_agent_root.exists() and str(_job_agent_root) not in sys.path:
+        sys.path.insert(0, str(_job_agent_root))
+    try:
+        from matching.cv_generator import _build_filename
+        job_meta = {
+            "company": profile.get("company", "Company"),
+            "job_title": profile.get("job_title", "Position"),
+        }
+        if cv_path and Path(cv_path).exists():
+            cv_name = _build_filename(job_meta, "CV")
+            tmp_cv = Path(tempfile.gettempdir()) / f"{cv_name}.pdf"
+            shutil.copy(cv_path, tmp_cv)
+            cv_path = str(tmp_cv)
+            print(f"[0/5] CV copied to: {tmp_cv.name}")
+        if cl_path and Path(cl_path).exists():
+            cl_name = _build_filename(job_meta, "Cover_Letter")
+            tmp_cl = Path(tempfile.gettempdir()) / f"{cl_name}.pdf"
+            shutil.copy(cl_path, tmp_cl)
+            cl_path = str(tmp_cl)
+            print(f"[0/5] CL copied to: {tmp_cl.name}")
+    except Exception as e:
+        print(f"[0/5] Warning: could not rename CV/CL: {e}")
+
     print(f"[1/5] Opening {job_url}")
     driver = build_driver(headless=headless)
 
