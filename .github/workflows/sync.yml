@@ -28,13 +28,6 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
-      - name: Test GLM connectivity
-        env:
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-        run: |
-          pip install openai
-          python3 -c "import os; from openai import OpenAI; c = OpenAI(api_key=os.environ['GLM_API_KEY'], base_url='https://api.z.ai/api/paas/v4/'); r = c.chat.completions.create(model='glm-5.3-flash', messages=[{'role':'user','content':'hi'}], max_tokens=5); print('OK:', r.choices[0].message.content)"
-
       - name: Write GCP service account JSON
         run: |
           mkdir -p config
