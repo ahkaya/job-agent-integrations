@@ -3,17 +3,18 @@
 External automation integrations for [job-agent](https://github.com/ahkaya/job-agent).
 
 This repository demonstrates how the core `job-agent` system can be extended
-with third-party automation tools:
+with third-party automation and AI tools:
 
 1. **Send applications by email** (SMTP)
-2. **Autofill ATS application forms** (Selenium + LLM)
-3. **Track application status** via Gmail -> Make.com -> Sheets -> LLM -> DB
+2. **Autofill ATS application forms** (Selenium + LLM, never auto-submits)
+3. **Track application responses** end-to-end:
+   Gmail -> Make.com -> Google Sheets -> Ansible on GitHub Actions -> LLM -> Turso -> Telegram
 
 ## Why a separate repo?
 
 The core `job-agent` stays lean. Integration code that talks to external
 services lives here so the core remains deployable without Selenium,
-Gmail creds, etc.
+Gmail creds, cloud DB, etc.
 
 ---
 
@@ -30,7 +31,7 @@ For postings that say "email your CV to solliciteren@company.nl".
 
 ### `integrations/ai_form_filler_universal.py` - AI form filling
 
-For ATS forms with an "Apply" button (Greenhouse, Lever, ...).
+For ATS forms with an "Apply" button (Greenhouse, Lever, Ashby).
 
 Pipeline:
 
@@ -61,15 +62,31 @@ For autocomplete inputs (country, location):
 - Scores every option (`exact` > `starts_with` > `city_name` > `word_match`)
 - Clicks the best match via JavaScript (avoids stale-element errors)
 
+#### Professional CV filenames
+
+Before uploading, the CV is copied to a temp file with a professional name
+built from the job metadata (`2026-09-25_<Company>_<Position>_CV.pdf`)
+instead of the internal job ID. Temp files are cleaned up by the OS.
+
+#### Dashboard integration
+
+The job-agent Streamlit dashboard exposes this filler as a
+**"Apply with Autofill"** button on the *Generated CVs* page. The button:
+
+- Runs Selenium in a separate process so the dashboard UI stays responsive
+- Passes the CV PDF matching the selected job
+- Only enables for Greenhouse, Lever, and Ashby URLs
+- Never submits - the user reviews the form and clicks Submit manually
+
 Tested with:
 
 - **Greenhouse** (`job-boards.greenhouse.io/figma`)
 - **Lever** (`jobs.lever.co/spotify`)
 
-### `integrations/gmail_tracker.py` - Gmail -> Sheets -> LLM -> DB
+### `integrations/gmail_tracker.py` - Gmail -> Sheets -> LLM -> Turso
 
-Classifies application-response emails and writes the result back to
-`job-agent`'s database, closing the application loop.
+Classifies application-response emails and writes the result back to the
+`job-agent` database, closing the application loop.
 
 Pipeline:
 
@@ -79,14 +96,18 @@ Pipeline:
 2. Make.com writes each match to a Google Sheet (`Job Applications Tracker`)
    with columns:
    `email_id | sender | subject | snippet | received_at | processed`.
-3. `gmail_tracker.py` reads new rows (`processed=FALSE`), sends
+3. **GitHub Actions** runs an **Ansible playbook** on a cron schedule
+   (Mon-Fri, 08:30-16:30 CEST, every 30 minutes).
+4. `gmail_tracker.py` reads new rows (`processed=FALSE`), sends
    **subject + sender + snippet** to the LLM (GLM).
-4. The LLM returns a category: `interview` | `rejection` | `offer` | `info` |
-   `irrelevant`, plus a confidence score and a one-sentence reason.
-5. Rows are written to `application_emails` in `job-agent`'s SQLite DB.
-   `job_id` is matched by sender domain (e.g. `hr@spotify.com` -> `spotify`)
-   against the `jobs` table.
-6. The Sheet row is marked `processed=TRUE`.
+5. The LLM returns a category: `interview` | `rejection` | `offer` |
+   `info` | `irrelevant`, plus a confidence score and a one-sentence reason.
+6. Rows are written to `application_emails` in the **Turso cloud database**
+   (libSQL), matched to a `job_id` by sender domain
+   (e.g. `hr@spotify.com` -> `spotify`).
+7. **Telegram notifications** are sent for actionable responses
+   (`interview`, `offer`). Rejections and info are stored silently.
+8. The Sheet row is marked `processed=TRUE`.
 
 **Robustness:** The classifier uses `response_format=json_object`, a
 single retry with `temperature=0` on JSON parse failure, and a graceful
@@ -97,44 +118,63 @@ Run it manually:
 
     python3 integrations/gmail_tracker.py
 
-Or schedule it via cron / launchd for continuous sync.
-
 ### `integrations/form_filler.py` - Greenhouse-only (legacy)
 
 Older, simpler version. Kept for reference.
 
 ---
 
-## Make.com scenario (Gmail -> Sheets)
+## Cloud architecture
 
-The Make.com scenario is the front half of the tracking pipeline. It is a
-visual, no-code automation that can be inspected and edited without
-touching code.
+The response-tracking pipeline runs entirely on free tiers:
 
-**Modules:**
+| Component | Role | Free tier |
+|---|---|---|
+| **Make.com** | Gmail watcher -> Sheets | 1,000 ops/month |
+| **GitHub Actions** | Cron runner (Ansible) | 2,000 min/month (private repos) |
+| **Ansible** | Environment setup + task runner | Open source |
+| **Turso (libSQL)** | Cloud SQLite database | 5 GB storage, 500M row reads |
+| **GLM (Z.AI)** | LLM classifier | Pay-per-use |
+| **Telegram Bot API** | Push notifications | Free |
 
-1. **Gmail - Watch Emails** (polling, every 15 min on the free plan)
-   - Filter type: `Gmail filter`
-   - Query:
-     `subject:(interview OR application OR sollicitatie OR vacature OR afwijzing OR uitnodiging OR update OR status OR decision OR candidate OR confirmation OR thank OR applying)`
-2. **Google Sheets - Add a Row**
-   - Spreadsheet: `Job Applications Tracker`
-   - Column mapping:
-     - `email_id`    <- Gmail -> Message ID
-     - `sender`      <- Gmail -> From Email
-     - `subject`     <- Gmail -> Subject
-     - `snippet`     <- Gmail -> Snippet
-     - `received_at` <- Gmail -> Date (formatDate(...; "YYYY-MM-DDTHH:mm:ss[Z]"))
-     - `processed`   <- `FALSE` (literal)
+### Data flow
 
-**Auth:** Google Sheets OAuth via a dedicated GCP OAuth Client (project
-`job-agent-tracker-509622`, external, test mode). The `aaahmetkayaaa@gmail.com`
-account is added as a test user.
+    Gmail
+      -> Make.com (filter + write to Sheets)
+        -> Google Sheets
+          -> GitHub Actions (cron, every 30 min)
+            -> Ansible playbook
+              -> gmail_tracker.py (Python + GLM)
+                -> Turso cloud DB  (written)
+                -> Telegram        (notified)
+                -> Sheets          (marked processed)
 
-**Why Make.com here:** the JD for the target role explicitly mentions
-Zapier / Integromat (Make.com) / Ansible / Selenium. This scenario is a
-working Make.com automation that feeds a Python + LLM backend - i.e. the
-"no-code -> code" bridge the role asks for.
+The **job-agent** desktop dashboard pulls from the same Turso DB via
+`pyturso`, so local and cloud always see the same data.
+
+### Turso setup
+
+1. `turso db create job-agent`
+2. `turso db show job-agent --url` -> `TURSO_SYNC_URL`
+3. `turso db tokens create job-agent` -> `TURSO_TOKEN`
+4. Put both in `.env` (local) and in GitHub Actions secrets (CI)
+
+`data/database.py` in `job-agent` uses `pyturso` with
+`remote_url` + `auth_token`, so the same SQLite file is synced to Turso
+automatically via `conn.pull()` / `conn.push()`.
+
+### GitHub Actions secrets
+
+| Secret | Purpose |
+|---|---|
+| `GLM_API_KEY` | LLM classifier |
+| `TELEGRAM_BOT_TOKEN` | Telegram notifications |
+| `TELEGRAM_CHAT_ID` | Telegram target chat |
+| `GOOGLE_SHEETS_ID` | Sheet to read |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Sheets access (single-line JSON) |
+| `GMAIL_ADDRESS` | Sender address |
+| `TURSO_SYNC_URL` | Cloud DB URL (`https://...turso.io`) |
+| `TURSO_TOKEN` | Cloud DB auth token |
 
 ---
 
@@ -148,13 +188,13 @@ working Make.com automation that feeds a Python + LLM backend - i.e. the
 Fill in:
 
 - `GMAIL_ADDRESS` - your Gmail address
-- `GMAIL_APP_PASSWORD` - Gmail App Password (from myaccount.google.com/apppasswords)
+- `GMAIL_APP_PASSWORD` - Gmail App Password
 - `GLM_API_KEY` - from https://z.ai/
 - `GOOGLE_SHEETS_ID` - the `Job Applications Tracker` spreadsheet ID
 - `GOOGLE_SERVICE_ACCOUNT_JSON` - path to the GCP service account JSON
   (default: `config/gcp_service_account.json`)
-- `JOB_AGENT_DB_PATH` - path to `job-agent/data/jobs.db`
-  (default: `../job-agent/data/jobs.db`)
+- `TURSO_SYNC_URL` - Turso cloud DB URL
+- `TURSO_TOKEN` - Turso auth token
 
 The service account must be shared on the spreadsheet as **Editor**.
 
@@ -177,6 +217,10 @@ Sync new responses from the Sheet into the DB:
 
     python3 integrations/gmail_tracker.py
 
+Run the CI playbook locally:
+
+    ansible-playbook ansible/playbook.yml
+
 ---
 
 ## Safety
@@ -184,7 +228,7 @@ Sync new responses from the Sheet into the DB:
 - **Never auto-submits.** The user clicks Submit on every form.
 - **Stale-element safe.** Re-finds elements, uses JS click fallbacks.
 - **ATS-autofill aware.** Leaves fields the ATS already filled alone.
-- **No credentials in git.** `.env` and `config/` are gitignored.
+- **No credentials in git.** `.env`, `config/`, and DB files are gitignored.
 - **No lost emails.** LLM errors leave `processed=FALSE` for retry.
 - **Never invents data.** The LLM only classifies; it does not write
   free-form text to the DB.
