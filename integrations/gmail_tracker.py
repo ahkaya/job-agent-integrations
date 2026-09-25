@@ -82,10 +82,26 @@ def classify_email(subject, sender, snippet=""):
         ],
         response_format={"type": "json_object"},
         temperature=0.1,
-        max_tokens=300,
+        max_tokens=500,
     )
     content = response.choices[0].message.content
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        try:
+            retry = client.chat.completions.create(
+                model="glm-5.3-flash",
+                messages=[
+                    {"role": "system", "content": CLASSIFY_PROMPT},
+                    {"role": "user", "content": user_msg + "\n\nReturn ONLY a single-line JSON object. No newlines inside strings."},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=500,
+            )
+            return json.loads(retry.choices[0].message.content)
+        except Exception:
+            return {"category": "info", "confidence": 0.0, "reason": "LLM parse error (retried)"}
 
 
 def _match_job_id(sender, subject, conn):
@@ -154,6 +170,7 @@ def sync_sheet_to_db(verbose=True):
             email_id = (row.get("email_id") or "").strip()
             sender = (row.get("sender") or "").strip()
             subject = (row.get("subject") or "").strip()
+            snippet = (row.get("snippet") or "").strip()
             received_at = (row.get("received_at") or "").strip()
             processed = str(row.get("processed") or "").strip().lower()
 
@@ -171,12 +188,12 @@ def sync_sheet_to_db(verbose=True):
             ).fetchone()
             if existing:
                 # Mark as processed anyway
-                ws.update_cell(idx, 5, "TRUE")
+                ws.update_cell(idx, 6, "TRUE")
                 continue
 
             # Classify with LLM
             try:
-                classification = classify_email(subject, sender, "")
+                classification = classify_email(subject, sender, snippet)
             except Exception as e:
                 if verbose:
                     print(f"  [ERR] classify {email_id}: {e}")
@@ -190,7 +207,7 @@ def sync_sheet_to_db(verbose=True):
 
             if category == "irrelevant":
                 stats["irrelevant"] += 1
-                ws.update_cell(idx, 5, "TRUE")
+                ws.update_cell(idx, 6, "TRUE")
                 continue
 
             # Try to match to a job
@@ -224,7 +241,7 @@ def sync_sheet_to_db(verbose=True):
             conn.commit()
 
             # Mark the sheet row as processed
-            ws.update_cell(idx, 5, "TRUE")
+            ws.update_cell(idx, 6, "TRUE")
 
             if verbose:
                 print(f"  [{category}] {sender[:30]} | {subject[:50]} | "
