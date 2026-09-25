@@ -1,5 +1,10 @@
-requests
-selenium
-undetected-chromedriver
-webdriver-manager
-python-dotenv
+openai>=1.0.0
+gspread>=6.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+selenium>=4.15.0
+undetected-chromedriver>=3.5.0
+webdriver-manager>=4.0.0
+beautifulsoup4>=4.12.0
