@@ -10,16 +10,10 @@
       args:
         creates: .venv/bin/python
 
-    - name: Upgrade pip
-      pip:
-        name: pip
-        state: latest
-        virtualenv: .venv
-
     - name: Install Python dependencies
-      pip:
-        requirements: requirements.txt
-        virtualenv: .venv
+      command: .venv/bin/pip install -r requirements.txt
+      register: pip_result
+      changed_when: false
 
     - name: Run Gmail tracker (sync + Telegram notify)
       command: .venv/bin/python integrations/gmail_tracker.py
