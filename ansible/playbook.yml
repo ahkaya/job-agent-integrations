@@ -1,0 +1,31 @@
+---
+- name: Run job-agent Gmail sync
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Create virtualenv
+      command: python3 -m venv .venv
+      args:
+        creates: .venv/bin/python
+
+    - name: Upgrade pip
+      pip:
+        name: pip
+        state: latest
+        virtualenv: .venv
+
+    - name: Install Python dependencies
+      pip:
+        requirements: requirements.txt
+        virtualenv: .venv
+
+    - name: Run Gmail tracker (sync + Telegram notify)
+      command: .venv/bin/python integrations/gmail_tracker.py
+      register: tracker_result
+      changed_when: false
+
+    - name: Show tracker output
+      debug:
+        var: tracker_result.stdout_lines

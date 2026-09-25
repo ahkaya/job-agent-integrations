@@ -1,0 +1,40 @@
+name: Gmail Sync (Ansible)
+
+on:
+  schedule:
+    # Cron is UTC. 08:30-16:30 local (CEST = UTC+2), Mon-Fri.
+    # Runs at :30 every hour from 06:30 to 14:30 UTC.
+    - cron: '30 6-14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Write GCP service account JSON
+        run: |
+          mkdir -p config
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > config/gcp_service_account.json
+
+      - name: Run Ansible playbook
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: config/gcp_service_account.json
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+        run: ansible-playbook ansible/playbook.yml

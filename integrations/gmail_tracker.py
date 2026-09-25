@@ -11,6 +11,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import requests
 from openai import OpenAI
 
 # Make sure job-agent modules are importable
@@ -19,6 +20,23 @@ JOB_AGENT_ROOT = Path(__file__).resolve().parent.parent.parent / "job-agent"
 if JOB_AGENT_ROOT.exists():
     sys.path.insert(0, str(JOB_AGENT_ROOT))
 
+
+
+
+def send_telegram(msg):
+    """Send a notification to Telegram. Silently skips if env vars missing."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"  [WARN] Telegram notification failed: {e}")
 
 CLASSIFY_PROMPT = """You are an email classifier for job applications.
 
@@ -209,6 +227,15 @@ def sync_sheet_to_db(verbose=True):
                 stats["irrelevant"] += 1
                 ws.update_cell(idx, 6, "TRUE")
                 continue
+
+            # Notify on actionable responses (interview / offer)
+            if category in ("interview", "offer"):
+                icon = "📞" if category == "interview" else "🎉"
+                send_telegram(
+                    f"{icon} *{category.upper()}*\n"
+                    f"From: {sender}\n"
+                    f"Subject: {subject}"
+                )
 
             # Try to match to a job
             job_id, company = _match_job_id(sender, subject, conn)
