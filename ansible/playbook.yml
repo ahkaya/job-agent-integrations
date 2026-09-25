@@ -4,19 +4,27 @@
   connection: local
   gather_facts: false
 
+  vars:
+    repo_root: "{{ playbook_dir }}/.."
+
   tasks:
     - name: Create virtualenv
       command: python3 -m venv .venv
       args:
-        creates: .venv/bin/python
+        chdir: "{{ repo_root }}"
+        creates: "{{ repo_root }}/.venv/bin/python"
 
     - name: Install Python dependencies
       command: .venv/bin/pip install -r requirements.txt
+      args:
+        chdir: "{{ repo_root }}"
       register: pip_result
       changed_when: false
 
     - name: Run Gmail tracker (sync + Telegram notify)
       command: .venv/bin/python integrations/gmail_tracker.py
+      args:
+        chdir: "{{ repo_root }}"
       register: tracker_result
       changed_when: false
 
