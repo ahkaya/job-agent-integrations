@@ -3,7 +3,6 @@ name: Gmail Sync (Ansible)
 on:
   schedule:
     # Cron is UTC. 08:30-16:30 local (CEST = UTC+2), Mon-Fri.
-    # Runs at :30 every hour from 06:30 to 14:30 UTC.
     - cron: '30 6-14 * * 1-5'
   workflow_dispatch:
 
@@ -13,8 +12,14 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout repo
+      - name: Checkout job-agent-integrations
         uses: actions/checkout@v4
+
+      - name: Checkout job-agent (core, for data module)
+        uses: actions/checkout@v4
+        with:
+          repository: ahkaya/job-agent
+          path: job-agent
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -37,4 +42,6 @@ jobs:
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: config/gcp_service_account.json
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          TURSO_SYNC_URL: ${{ secrets.TURSO_SYNC_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
         run: ansible-playbook ansible/playbook.yml
