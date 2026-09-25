@@ -34,23 +34,27 @@ jobs:
           mkdir -p config
           echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > config/gcp_service_account.json
 
-      - name: Test z.ai connectivity
+      - name: Test GLM via openai package
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: |
-          echo "=== z.ai connectivity test ==="
-          echo "Key length: ${#GLM_API_KEY}"
-          echo "Key first 10 chars: ${GLM_API_KEY:0:10}"
-          echo "--- HTTP test ---"
-          curl -s -o /tmp/zai_resp.txt -w "HTTP: %{http_code}\n" \
-            -X POST "https://api.z.ai/api/paas/v4/chat/completions" \
-            -H "Authorization: Bearer $GLM_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"model":"glm-5.3-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
-            --max-time 20 || echo "CURL FAILED with code: $?"
-          echo "--- Response body ---"
-          cat /tmp/zai_resp.txt | head -c 500
-          echo ""
+          pip install openai
+          python3 -c "
+import os, traceback
+from openai import OpenAI
+client = OpenAI(api_key=os.environ['GLM_API_KEY'], base_url='https://api.z.ai/api/paas/v4/')
+try:
+    r = client.chat.completions.create(
+        model='glm-5.3-flash',
+        messages=[{'role': 'user', 'content': 'hi'}],
+        max_tokens=5,
+    )
+    print('OK:', r.choices[0].message.content)
+except Exception as e:
+    print('ERROR type:', type(e).__name__)
+    print('ERROR str:', str(e)[:500])
+    traceback.print_exc()
+"
 
       - name: Run Ansible playbook
         env:
