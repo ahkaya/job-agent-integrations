@@ -16,7 +16,13 @@ from openai import OpenAI
 
 # Make sure job-agent modules are importable
 import sys
-JOB_AGENT_ROOT = Path(__file__).resolve().parent.parent.parent / "job-agent"
+# Try local layout (~/job-agent as sibling of ~/job-agent-integrations)
+# Then CI layout (job-agent nested inside job-agent-integrations)
+_candidates = [
+    Path(__file__).resolve().parent.parent.parent / "job-agent",
+    Path(__file__).resolve().parent.parent / "job-agent",
+]
+JOB_AGENT_ROOT = next((p for p in _candidates if p.exists()), _candidates[0])
 if JOB_AGENT_ROOT.exists():
     sys.path.insert(0, str(JOB_AGENT_ROOT))
 
@@ -275,6 +281,11 @@ def sync_sheet_to_db(verbose=True):
                       f"job_id={job_id or 'unmatched'}")
 
     finally:
+        try:
+            conn.push()
+        except Exception as e:
+            if verbose:
+                print(f"  [WARN] Turso push failed: {e}")
         conn.close()
 
     return stats
